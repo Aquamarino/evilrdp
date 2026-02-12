@@ -4,6 +4,7 @@ import sys
 from aardwolf import logger
 from aardwolf.commons.iosettings import RDPIOSettings
 from aardwolf.commons.queuedata.constants import VIDEO_FORMAT
+from aardwolf.protocol.x224.constants import SUPP_PROTOCOLS
 #from aardwolf.extensions.RDPEDYC.vchannels.socksoverrdp import SocksOverRDPChannel
 from evilrdp._version import __banner__
 from evilrdp.gui import EvilRDPGUI, RDPClientConsoleSettings
@@ -19,7 +20,16 @@ def main():
 	parser.add_argument('--no-keyboard', action='store_false', help='Disables keyboard input. (whatever)')
 	parser.add_argument('--res', default = '1024x768', help='Resolution in "WIDTHxHEIGHT" format. Default: "1024x768"')
 	parser.add_argument('--keyboard', default = 'enus', help='Keyboard on the client side. Used for VNC and duckyscript')
-	parser.add_argument('url', help="RDP connection url")
+	parser.add_argument('url', help="""RDP connection URL in format: rdp://[domain\\\\user[:password]@]host[:port]
+	IMPORTANT: If the RDP server requires NLA/CredSSP authentication, you MUST provide credentials!
+	Format with credentials: rdp://domain\\\\user:password@host:port or rdp://user:password@host
+	Examples:
+	  rdp://192.168.1.100 (no authentication)
+	  rdp://192.168.1.100:3389 (custom port)
+	  rdp://user:password@192.168.1.100 (basic authentication)
+	  rdp://domain\\\\user:password@192.168.1.100:3389 (domain + credentials + custom port)
+	Note: In command line, escape backslashes: domain\\\\user (double backslash)
+	""")
 
 	args = parser.parse_args()
 
@@ -38,6 +48,15 @@ def main():
 	iosettings.video_height = height
 	iosettings.video_out_format = VIDEO_FORMAT.PIL
 	iosettings.client_keyboard = args.keyboard
+	
+	# Enable NLA/Hybrid authentication to connect to servers that require CredSSP
+	# This allows the client to negotiate with servers that have HYBRID_REQUIRED_BY_SERVER
+	iosettings.supported_protocols = (
+		SUPP_PROTOCOLS.RDP | 
+		SUPP_PROTOCOLS.SSL | 
+		SUPP_PROTOCOLS.HYBRID | 
+		SUPP_PROTOCOLS.HYBRID_EX
+	)
 
 	#from evilrdp.vchannels.pscmd import PSCMDChannel
 	#iosettings.vchannels['PSCMD'] = PSCMDChannel('PSCMD')

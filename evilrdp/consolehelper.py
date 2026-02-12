@@ -210,7 +210,13 @@ class EVILRDPConsole(aiocmd.PromptToolkitCmd):
 			print('Downloading file...')
 			with open(dstfilepath, 'wb') as f:
 				async for response in vchannel.sendrcv_getfile(filepath):
-					f.write(response)
+					# Ensure we write bytes. Some channel implementations may yield str.
+					if isinstance(response, str):
+						f.write(response.encode('utf-8'))
+					elif isinstance(response, memoryview):
+						f.write(response.tobytes())
+					else:
+						f.write(response)
 
 			print('%s Downloaded to %s' % (filepath, dstfilepath))
 		except Exception as e:

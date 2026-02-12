@@ -18,8 +18,61 @@ from aardwolf.commons.queuedata.constants import MOUSEBUTTON
 from aardwolf.commons.target import RDPConnectionDialect
 
 from evilrdp.consolehelper import EVILRDPConsole
-from PIL.ImageQt import ImageQt
 
+# Try to import ImageQt, with fallback for PyInstaller bundled versions
+try:
+	from PIL.ImageQt import ImageQt
+except ImportError:
+	try:
+		# Fallback for Pillow 10+
+		from PIL import ImageQt as PILImageQt
+		ImageQt = PILImageQt.ImageQt
+	except (ImportError, AttributeError):
+		# Last resort: define a wrapper function that converts PIL Image to QImage
+		# without relying on specific encoders
+		from PIL import Image
+		def ImageQt(img):
+			"""Convert PIL Image to QImage without relying on encoders"""
+			from PyQt5.QtGui import QImage
+			if not isinstance(img, Image.Image):
+				return img
+			
+			try:
+				# Try to use tobytes with a format that's always available
+				# Convert to RGB(A) first to ensure format compatibility
+				if img.mode == 'RGBA':
+					# Already RGBA, try to get bytes
+					try:
+						data = img.tobytes("raw", "RGBA")
+					except (OSError, ValueError):
+						# If raw RGBA fails, convert to RGB and add alpha separately
+						img_rgb = img.convert('RGB')
+						data = img_rgb.tobytes("raw", "RGB")
+						# Pad with full opacity alpha channel
+						alpha_data = b'\xff' * (img.width * img.height)
+						data = b''.join(bytes([data[i], data[i+1], data[i+2], 255]) 
+							for i in range(0, len(data), 3))
+				elif img.mode in ('RGB', 'L'):
+					# For RGB or grayscale, get the bytes and build RGBA
+					img_converted = img.convert('RGB')
+					rgb_data = img_converted.tobytes("raw", "RGB")
+					# Add alpha channel (full opacity)
+					data = b''.join(bytes([rgb_data[i], rgb_data[i+1], rgb_data[i+2], 255]) 
+						for i in range(0, len(rgb_data), 3))
+				else:
+					# For other modes, convert to RGB first
+					img_converted = img.convert('RGB')
+					rgb_data = img_converted.tobytes("raw", "RGB")
+					data = b''.join(bytes([rgb_data[i], rgb_data[i+1], rgb_data[i+2], 255]) 
+						for i in range(0, len(rgb_data), 3))
+				
+				qimage = QImage(data, img.width, img.height, QImage.Format_RGBA8888)
+				return qimage
+			except Exception as e:
+				logger.warning(f"Failed to convert PIL Image to QImage: {e}")
+				# Final fallback: return a simple QImage
+				qimage = QImage(img.width, img.height, QImage.Format_RGB32)
+				return qimage
 
 from PyQt5.QtWidgets import QApplication, QMainWindow, qApp, QLabel
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QThread, Qt
@@ -121,8 +174,11 @@ class RDPInterfaceThread(QObject):
 		input_handler_thread = None
 
 		try:
+			logger.info(f"Connecting to RDP URL: {self.settings.url}")
+			
 			rdpurl = RDPConnectionFactory.from_url(self.settings.url, self.settings.iosettings)
 			self.conn = rdpurl.get_connection(self.settings.iosettings)
+			
 			_, err = await self.conn.connect()
 			if err is not None:
 				raise err
@@ -158,6 +214,15 @@ class RDPInterfaceThread(QObject):
 			return
 		
 		except Exception as e:
+			# Enhanced error handling for common authentication issues
+			error_msg = str(e)
+			if 'Unsupported Secret Type' in error_msg or 'asyauthSecret.NONE' in error_msg:
+				logger.error("Authentication failed: Credentials required")
+				logger.error("RDP URL must include username and password for NLA/CredSSP authentication")
+				logger.error("Format: rdp://[domain\\user[:password]@]host[:port]")
+				logger.error("Example: rdp://DOMAIN\\username:password@192.168.1.100:3389")
+			else:
+				logger.error(f"Connection error: {e}")
 			traceback.print_exc()
 		finally:
 			if self.conn is not None:
